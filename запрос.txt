@@ -1,0 +1,234 @@
+-- =====================================
+-- 1. ТАБЛИЦЫ
+-- =====================================
+
+CREATE TABLE Department (
+    ID_Department INT AUTO_INCREMENT PRIMARY KEY,
+    Name_Department VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE Post (
+    ID_Post INT AUTO_INCREMENT PRIMARY KEY,
+    Name_Post VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE User_Profile (
+    UP_Login VARCHAR(36) PRIMARY KEY,
+    UP_Password VARCHAR(36) NOT NULL,
+    U_Surname VARCHAR(50) NOT NULL,
+    U_Name VARCHAR(50) NOT NULL,
+    U_Patronymic VARCHAR(50) DEFAULT '-',
+    CHECK (CHAR_LENGTH(UP_Login) >= 8),
+    CHECK (
+        CHAR_LENGTH(UP_Password) >= 8 AND
+        UP_Password REGEXP '[A-Z]' AND
+        UP_Password REGEXP '[a-z]' AND
+        UP_Password REGEXP '[0-9]'
+    )
+);
+
+CREATE TABLE Employee (
+    Employee_Login VARCHAR(36) PRIMARY KEY,
+    Personal_File_N VARCHAR(16) UNIQUE,
+    FOREIGN KEY (Employee_Login) REFERENCES User_Profile(UP_Login) ON DELETE CASCADE,
+    CHECK (Personal_File_N REGEXP 'ЛД-[0-9]{10}')
+);
+
+CREATE TABLE Student (
+    Login_Student VARCHAR(36) PRIMARY KEY,
+    Credit_Card_N VARCHAR(16) UNIQUE,
+    FOREIGN KEY (Login_Student) REFERENCES User_Profile(UP_Login) ON DELETE CASCADE,
+    CHECK (Credit_Card_N REGEXP 'ЗК-[0-9]{7}-[0-9]{2}')
+);
+
+CREATE TABLE Bussines_Role (
+    ID_Bussines_Role INT AUTO_INCREMENT PRIMARY KEY,
+    Name_BR VARCHAR(50) UNIQUE,
+    Department_ID INT NOT NULL,
+    FOREIGN KEY (Department_ID) REFERENCES Department(ID_Department)
+);
+
+CREATE TABLE WrkCrr (
+    ID_WrkCrr INT AUTO_INCREMENT PRIMARY KEY,
+    N_Week_WrkCrr INT CHECK (N_Week_WrkCrr >= 0),
+    N_Hours_WrkCrr DECIMAL(5,2) CHECK (N_Hours_WrkCrr >= 0),
+    Bussines_Role_ID INT,
+    FOREIGN KEY (Bussines_Role_ID) REFERENCES Bussines_Role(ID_Bussines_Role)
+);
+
+CREATE TABLE Study_Grpoup (
+    ID_Study_Grpoup INT AUTO_INCREMENT PRIMARY KEY,
+    Name_St_Grp VARCHAR(10) UNIQUE,
+    Date_Create_SG DATE NOT NULL,
+    WrkCrr_ID INT,
+    FOREIGN KEY (WrkCrr_ID) REFERENCES WrkCrr(ID_WrkCrr),
+    CHECK (Date_Create_SG >= CURRENT_DATE)
+);
+
+CREATE TABLE Combination (
+    ID_Combination INT AUTO_INCREMENT PRIMARY KEY,
+    Department_ID INT,
+    Post_ID INT,
+    Login_Employee VARCHAR(36),
+    FOREIGN KEY (Department_ID) REFERENCES Department(ID_Department),
+    FOREIGN KEY (Post_ID) REFERENCES Post(ID_Post),
+    FOREIGN KEY (Login_Employee) REFERENCES Employee(Employee_Login)
+);
+
+CREATE TABLE Workload (
+    ID_Workload INT AUTO_INCREMENT PRIMARY KEY,
+    N_Hr_Workload DECIMAL(5,1) CHECK (N_Hr_Workload >= 0),
+    Study_Grpoup_ID INT,
+    Combination_ID INT,
+    FOREIGN KEY (Study_Grpoup_ID) REFERENCES Study_Grpoup(ID_Study_Grpoup),
+    FOREIGN KEY (Combination_ID) REFERENCES Combination(ID_Combination)
+);
+
+-- =====================================
+-- 2. ДАННЫЕ
+-- =====================================
+
+INSERT INTO Department (Name_Department) VALUES
+('Информационные технологии'),
+('Математика');
+
+INSERT INTO Post (Name_Post) VALUES
+('Преподаватель'),
+('Архитектор кафедры');
+
+INSERT INTO User_Profile VALUES
+('user_ivanov', 'Password1', 'Иванов', 'Иван', '-'),
+('user_petrov', 'Password1', 'Петров', 'Пётр', '-'),
+('st_student1', 'Password1', 'Сидоров', 'Алексей', '-');
+
+INSERT INTO Employee VALUES
+('user_ivanov', 'ЛД-0000000001');
+
+INSERT INTO Student VALUES
+('st_student1', 'ЗК-1234567-01');
+
+INSERT INTO Bussines_Role (Name_BR, Department_ID) VALUES
+('Backend разработка', 1),
+('Frontend разработка', 1);
+
+INSERT INTO WrkCrr (N_Week_WrkCrr, N_Hours_WrkCrr, Bussines_Role_ID) VALUES
+(16, 72, 1);
+
+INSERT INTO Study_Grpoup (Name_St_Grp, Date_Create_SG, WrkCrr_ID) VALUES
+('2Р1.22', CURRENT_DATE, 1);
+
+INSERT INTO Combination (Department_ID, Post_ID, Login_Employee) VALUES
+(1, 1, 'user_ivanov');
+
+INSERT INTO Workload (N_Hr_Workload, Study_Grpoup_ID, Combination_ID) VALUES
+(100, 1, 1);
+
+-- =====================================
+-- 3. ПРОЦЕДУРЫ
+-- =====================================
+
+DELIMITER $$
+
+-- 1. Проверка уникальности кафедры
+CREATE PROCEDURE Department_Insert(IN p_name VARCHAR(100))
+BEGIN
+    IF EXISTS (SELECT 1 FROM Department WHERE Name_Department = p_name) THEN
+        SELECT 'Кафедра уже существует!' AS message;
+    ELSE
+        INSERT INTO Department(Name_Department) VALUES (p_name);
+    END IF;
+END$$
+
+-- 2. Генерация номера сотрудника
+CREATE PROCEDURE Employee_Insert(IN p_login VARCHAR(36))
+BEGIN
+    DECLARE new_id INT;
+    DECLARE new_number VARCHAR(20);
+
+    SELECT COUNT(*) + 1 INTO new_id FROM Employee;
+    SET new_number = CONCAT('ЛД-', LPAD(new_id, 10, '0'));
+
+    INSERT INTO Employee(Employee_Login, Personal_File_N)
+    VALUES (p_login, new_number);
+END$$
+
+-- 3. Запрет удаления роли
+CREATE PROCEDURE Bussines_Role_Delete(IN p_id INT)
+BEGIN
+    DECLARE cnt INT;
+
+    SELECT COUNT(*) INTO cnt FROM WrkCrr WHERE Bussines_Role_ID = p_id;
+
+    IF cnt > 0 THEN
+        SELECT 'Нельзя удалить — используется!' AS message;
+    ELSE
+        DELETE FROM Bussines_Role WHERE ID_Bussines_Role = p_id;
+    END IF;
+END$$
+
+-- 4. Проверка дубликатов назначения
+CREATE PROCEDURE Combination_Insert(
+    IN p_login VARCHAR(36),
+    IN p_dep INT,
+    IN p_post INT
+)
+BEGIN
+    DECLARE cnt INT;
+
+    SELECT COUNT(*) INTO cnt
+    FROM Combination
+    WHERE Login_Employee = p_login
+    AND Department_ID = p_dep
+    AND Post_ID = p_post;
+
+    IF cnt > 0 THEN
+        SELECT 'Уже существует!' AS message;
+    ELSE
+        INSERT INTO Combination(Login_Employee, Department_ID, Post_ID)
+        VALUES (p_login, p_dep, p_post);
+    END IF;
+END$$
+
+-- 5. Пересчёт нагрузки
+CREATE PROCEDURE Workload_Update(IN p_combination INT)
+BEGIN
+    DECLARE total_hours DECIMAL(10,2);
+
+    SELECT SUM(N_Hr_Workload)
+    INTO total_hours
+    FROM Workload
+    WHERE Combination_ID = p_combination;
+
+    SELECT CONCAT('Общая нагрузка: ', total_hours) AS result;
+END$$
+
+DELIMITER ;
+
+-- =====================================
+-- 4. ТЕСТЫ
+-- =====================================
+
+CALL Department_Insert('Информационные технологии');
+CALL Department_Insert('Физика');
+
+CALL Employee_Insert('user_petrov');
+
+CALL Bussines_Role_Delete(1);
+
+CALL Combination_Insert('user_ivanov', 1, 1);
+
+CALL Workload_Update(1);
+
+-- =====================================
+-- 5. РОЛИ (MySQL)
+-- =====================================
+
+CREATE ROLE 'rl_student';
+CREATE ROLE 'rl_teacher';
+CREATE ROLE 'rl_admin';
+
+GRANT SELECT ON *.* TO 'rl_student';
+
+GRANT SELECT, INSERT, UPDATE ON *.* TO 'rl_teacher';
+
+GRANT ALL PRIVILEGES ON *.* TO 'rl_admin';
